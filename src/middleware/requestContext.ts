@@ -1,6 +1,7 @@
 import { createId } from "@paralleldrive/cuid2";
 import type { NextFunction, Request, Response } from "express";
 import { getLogger, runWithRequestContext } from "../lib/logger.js";
+import { getRequestLogContext } from "../lib/requestLogContext.js";
 
 const REQUEST_ID_HEADER = "x-request-id";
 
@@ -25,7 +26,7 @@ export function requestContextMiddleware(req: Request, res: Response, next: Next
         {
           event: "http_request",
           method: req.method,
-          path: req.originalUrl || req.url,
+          ...getRequestLogContext(req),
           statusCode: res.statusCode,
           durationMs: Date.now() - start,
         },

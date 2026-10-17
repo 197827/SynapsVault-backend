@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { getStatusCode, serializeError } from "../lib/errors.js";
 import { getLogger, getRequestId } from "../lib/logger.js";
+import { getRequestLogContext } from "../lib/requestLogContext.js";
 import { captureServerException } from "../lib/sentry.js";
 
 /**
@@ -10,7 +11,7 @@ import { captureServerException } from "../lib/sentry.js";
 export function errorHandler(err: unknown, req: Request, res: Response, next: NextFunction): void {
   const status = getStatusCode(err);
   const log = getLogger();
-  const context = { method: req.method, path: req.originalUrl, status };
+  const context = { method: req.method, ...getRequestLogContext(req), status };
 
   if (status >= 500) {
     log.error({ err, ...context, event: "unhandled_error" }, "request failed");

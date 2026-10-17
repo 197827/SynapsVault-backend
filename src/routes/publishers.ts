@@ -48,7 +48,6 @@ router.get("/publishers/wallet/:address", async (req, res) => {
     .select({
       id: publishers.id,
       name: publishers.name,
-      email: publishers.email,
       walletAddress: publishers.walletAddress,
       createdAt: publishers.createdAt,
     })
