@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { getLogger } from "../lib/logger.js";
+import { getRequestLogContext } from "../lib/requestLogContext.js";
 
 // Per-request timeout (issue #113). When a slow upstream (RPC, facilitator,
 // storage) keeps a request open past the limit, respond 503 instead of letting
@@ -16,7 +17,7 @@ export function requestTimeout(ms: number) {
         {
           event: "request_timeout",
           method: req.method,
-          path: req.originalUrl || req.url,
+          ...getRequestLogContext(req),
           timeoutMs: ms,
         },
         "request timed out",

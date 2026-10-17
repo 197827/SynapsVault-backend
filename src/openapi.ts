@@ -32,6 +32,14 @@ export const openApiSpec = {
         name: "x-api-key",
         description: "Publisher API key returned on registration",
       },
+      WalletSignatureAuth: {
+        type: "apiKey",
+        in: "header",
+        name: "x-wallet-signature",
+        description:
+          "Base64 Stellar Ed25519 signature of `synapsvault-wallet-auth-v1\\nGET\\n{request path}\\n{unix timestamp}`. " +
+          "The timestamp must be within five minutes of server time.",
+      },
       RequestSignature: {
         type: "apiKey",
         in: "header",
@@ -466,6 +474,93 @@ export const openApiSpec = {
         },
       },
     },
+    "/buyers/{address}/payments": {
+      get: {
+        tags: ["Payments"],
+        summary: "List payments made by a buyer",
+        operationId: "getBuyerPayments",
+        description:
+          "Requires a signature from the Stellar account at `address`. Sign `synapsvault-wallet-auth-v1\\nGET\\n{request path}\\n{unix timestamp}` and send it in X-Wallet-Signature with X-Wallet-Timestamp.",
+        security: [{ WalletSignatureAuth: [] }],
+        parameters: [
+          {
+            name: "address",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+            description: "Stellar payer wallet address",
+          },
+          {
+            name: "X-Wallet-Timestamp",
+            in: "header",
+            required: true,
+            schema: { type: "string" },
+            description: "Unix timestamp in seconds; must be within five minutes of server time.",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Payments made by this buyer",
+            content: { "application/json": { schema: { type: "array", items: { type: "object" } } } },
+          },
+          "401": {
+            description: "Missing, invalid, or expired wallet signature",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+        },
+      },
+    },
+    "/payments/{id}/receipt": {
+      get: {
+        tags: ["Payments"],
+        summary: "Get a payment receipt",
+        operationId: "getPaymentReceipt",
+        description:
+          "The payer may sign the request with X-Wallet-Address, X-Wallet-Timestamp, and X-Wallet-Signature. The recipient publisher may instead authenticate with its x-api-key.",
+        security: [{ WalletSignatureAuth: [] }, { ApiKeyAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+            description: "Payment id",
+          },
+          {
+            name: "X-Wallet-Address",
+            in: "header",
+            required: false,
+            schema: { type: "string" },
+            description: "Payer's Stellar address; required when using wallet signature authentication.",
+          },
+          {
+            name: "X-Wallet-Timestamp",
+            in: "header",
+            required: false,
+            schema: { type: "string" },
+            description: "Unix timestamp in seconds; required with wallet signature authentication.",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Receipt for an authorized payer or recipient publisher",
+            content: { "application/json": { schema: { type: "object" } } },
+          },
+          "401": {
+            description: "Missing or invalid authentication",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "403": {
+            description: "Caller is not a party to this payment",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "404": {
+            description: "Receipt not found",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+        },
+      },
+    },
     // ── Publishers ──────────────────────────────────────────────────────────
     "/publishers": {
       post: {
@@ -513,7 +608,19 @@ export const openApiSpec = {
         responses: {
           "200": {
             description: "Publisher found",
-            content: { "application/json": { schema: { $ref: "#/components/schemas/Publisher" } } },
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    name: { type: "string" },
+                    walletAddress: { type: "string" },
+                    createdAt: { type: "string", format: "date-time" },
+                  },
+                },
+              },
+            },
           },
           "404": {
             description: "Not found",
