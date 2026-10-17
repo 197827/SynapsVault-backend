@@ -163,6 +163,7 @@ const envWithDefaults = applyNetworkEnvDefaults(process.env);
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   PORT: z.coerce.number().default(4021),
+  TRUST_PROXY: z.coerce.number().int().nonnegative().optional(),
   BASE_URL: z.string().default("http://localhost:4021"),
   WEB_APP_URL: z.string().url().or(z.literal("")).default("http://localhost:5173"),
   ALLOWED_ORIGINS: z.string().optional(),
@@ -210,7 +211,7 @@ const envSchema = z.object({
   REGISTRY_SECRET_KEY: stellarSecret("REGISTRY_SECRET_KEY (deployer / owner secret)"),
 
   // Metrics endpoint token — if set, requests to /metrics must supply it via
-  // Bearer auth or ?token=. If unset, the endpoint is disabled.
+  // Bearer auth. If unset, the endpoint is disabled.
   METRICS_TOKEN: z.string().optional(),
 
   // Sentry error tracking — when DSN is set, unhandled errors are reported.

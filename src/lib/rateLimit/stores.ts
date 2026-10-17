@@ -38,26 +38,62 @@ function buildAllowedResult(
  * only events within the last `windowMs` count toward the limit.
  */
 export class MemorySlidingWindowStore implements RateLimitStore {
-  private readonly entries = new Map<string, number[]>();
+  private readonly entries = new Map<string, { timestamps: number[]; windowMs: number }>();
   private readonly now: () => number;
+  private readonly maxTrackedKeys: number;
 
-  constructor(now: () => number = () => Date.now()) {
+  constructor(
+    now: () => number = () => Date.now(),
+    maxTrackedKeys = 10_000,
+    sweepIntervalMs = 60_000,
+  ) {
     this.now = now;
+    this.maxTrackedKeys = Math.max(1, Math.trunc(maxTrackedKeys));
+    const sweepTimer = setInterval(() => this.sweep(), sweepIntervalMs);
+    sweepTimer.unref();
   }
 
   async consume(key: string, limit: number, windowMs: number): Promise<RateLimitConsumeResult> {
     const now = this.now();
     const windowStart = now - windowMs;
-    const active = (this.entries.get(key) ?? []).filter((timestamp) => timestamp > windowStart);
+    const active = (this.entries.get(key)?.timestamps ?? []).filter(
+      (timestamp) => timestamp > windowStart,
+    );
+
+    if (active.length === 0) {
+      this.entries.delete(key);
+    }
 
     if (active.length >= limit) {
-      this.entries.set(key, active);
+      this.setEntry(key, active, windowMs);
       return buildBlockedResult(limit, active.length, active[0]!, windowMs, now);
     }
 
     active.push(now);
-    this.entries.set(key, active);
+    this.setEntry(key, active, windowMs);
     return buildAllowedResult(limit, active.length, now, windowMs);
+  }
+
+  /** Remove keys whose sliding windows no longer contain active requests. */
+  sweep(): void {
+    const now = this.now();
+    for (const [key, entry] of this.entries) {
+      const active = entry.timestamps.filter((timestamp) => timestamp > now - entry.windowMs);
+      if (active.length === 0) {
+        this.entries.delete(key);
+      } else if (active.length !== entry.timestamps.length) {
+        this.entries.set(key, { ...entry, timestamps: active });
+      }
+    }
+  }
+
+  private setEntry(key: string, timestamps: number[], windowMs: number): void {
+    this.entries.delete(key);
+    if (this.entries.size >= this.maxTrackedKeys) {
+      const oldestKey = this.entries.keys().next().value;
+      if (oldestKey !== undefined) this.entries.delete(oldestKey);
+    }
+    this.entries.set(key, { timestamps, windowMs });
   }
 
   /** Test helper — clear all counters. */
