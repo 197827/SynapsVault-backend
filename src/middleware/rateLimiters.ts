@@ -2,7 +2,6 @@ import {
   createIpRateLimiter,
   createWalletRateLimiter,
   createPublisherRateLimiter,
-  extractPayerFromPaymentHeader,
 } from "../middleware/rateLimit.js";
 import { config } from "../config.js";
 import { getRateLimitStore } from "../lib/rateLimit/index.js";
@@ -23,7 +22,7 @@ export const verifyWalletRateLimit: RequestHandler = createWalletRateLimiter(
   "verify",
   config.RATE_LIMIT_VERIFY_WALLET_MAX,
   config.RATE_LIMIT_VERIFY_WALLET_WINDOW_MS,
-  extractPayerFromPaymentHeader,
+  (req) => req.ip || req.socket.remoteAddress || "unknown",
   "verify_wallet",
 );
 

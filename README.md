@@ -153,6 +153,8 @@ Private and loopback URLs are rejected.
 ## Environment variables
 
 See [`.env.example`](./.env.example) for the full list and descriptions.
+When deploying to Railway, set `TRUST_PROXY=1` so Express rate limits use the
+client IP forwarded by Railway. Proxy trust is disabled outside production.
 
 ## CI
 

@@ -1,4 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { config } from "../config.js";
 import { metricsRegistry } from "../lib/metrics.js";
 
@@ -10,11 +11,13 @@ metricsRouter.get("/metrics", async (req: Request, res: Response) => {
     return;
   }
 
-  const provided =
-    req.headers.authorization?.replace(/^Bearer\s+/i, "") ??
-    (req.query["token"] as string | undefined);
+  const provided = req.headers.authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
+  const digest = (token: string) => createHash("sha256").update(token).digest();
 
-  if (provided !== config.METRICS_TOKEN) {
+  if (
+    !provided ||
+    !timingSafeEqual(digest(provided), digest(config.METRICS_TOKEN))
+  ) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }

@@ -21,6 +21,10 @@ import adminRouter from "./routes/admin.js";
 export function createApp(): Express {
   const app = express();
 
+  if (config.NODE_ENV === "production" && config.TRUST_PROXY !== undefined) {
+    app.set("trust proxy", config.TRUST_PROXY);
+  }
+
   app.use(securityHeaders());
   app.use(compression());
   app.use(corsMiddleware());
