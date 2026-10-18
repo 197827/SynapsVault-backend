@@ -3,6 +3,7 @@ import { db } from "../db/client.js";
 import { resources } from "../db/schema.js";
 import {
   NETWORK_PASSPHRASE,
+  pollTransactionStatus,
   registryClient,
   registryKeypair,
   resourceExists,
@@ -62,6 +63,42 @@ async function retryResource(resource: typeof resources.$inferSelect): Promise<v
   const log = getLogger().child({ resourceId: resource.id });
 
   try {
+    if (resource.onchainTxHash) {
+      const status = await pollTransactionStatus(resource.onchainTxHash);
+
+      if (status === "PENDING") {
+        log.info(
+          { event: "retry_still_pending", txHash: resource.onchainTxHash },
+          "stored transaction still pending; leaving resource pending",
+        );
+        return;
+      }
+
+      if (status === "SUCCESS") {
+        await db
+          .update(resources)
+          .set({ onchainStatus: "registered" })
+          .where(eq(resources.id, resource.id));
+        retryCounts.delete(resource.id);
+        log.info(
+          { event: "retry_confirmed", txHash: resource.onchainTxHash },
+          "stored transaction confirmed; marking resource registered",
+        );
+        return;
+      }
+
+      await db
+        .update(resources)
+        .set({ onchainStatus: "failed" })
+        .where(eq(resources.id, resource.id));
+      retryCounts.delete(resource.id);
+      log.warn(
+        { event: "retry_tx_failed", txHash: resource.onchainTxHash },
+        "stored transaction failed on-chain; marking resource failed",
+      );
+      return;
+    }
+
     const exists = await resourceExists(resource.id);
     if (exists) {
       log.info(
