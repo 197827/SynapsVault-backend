@@ -12,6 +12,16 @@ const supabase = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY, 
 
 const bucket = config.SUPABASE_STORAGE_BUCKET;
 
+export class StorageNotFoundError extends Error {
+  readonly statusCode = 404;
+  readonly code = "STORAGE_NOT_FOUND";
+
+  constructor(storagePath: string) {
+    super(`Object not found in storage: ${storagePath}`);
+    this.name = "StorageNotFoundError";
+  }
+}
+
 export async function uploadFile(
   resourceId: string,
   fileBuffer: Buffer,
@@ -31,7 +41,14 @@ export async function downloadFile(
   storagePath: string,
 ): Promise<{ buffer: Buffer; mimeType: string }> {
   const { data, error } = await supabase.storage.from(bucket).download(storagePath);
-  if (error) throw new Error(`Download failed: ${error.message}`);
+  if (error) {
+    const statusCode = (error as { statusCode?: number | string }).statusCode;
+    const isNotFound =
+      String(statusCode) === "404" ||
+      /not\s*found/i.test(error.message ?? "");
+    if (isNotFound) throw new StorageNotFoundError(storagePath);
+    throw new Error(`Download failed: ${error.message}`);
+  }
   const buffer = Buffer.from(await data.arrayBuffer());
   const mimeType = data.type || "application/octet-stream";
   return { buffer, mimeType };

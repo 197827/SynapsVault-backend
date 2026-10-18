@@ -25,7 +25,7 @@ import {
   delistResource,
   getResourceById,
 } from "../services/resourceService.js";
-import { downloadFile } from "../storage/supabaseStorage.js";
+import { downloadFile, StorageObjectNotFoundError } from "../storage/supabaseStorage.js";
 import { db } from "../db/client.js";
 import { payments, resources } from "../db/schema.js";
 import { eq } from "drizzle-orm";
@@ -245,7 +245,19 @@ router.get("/resources/:id/thumbnail", async (req, res) => {
     res.setHeader("Cache-Control", "public, max-age=31536000");
     res.send(buffer);
   } catch (err) {
-    throw new AppError("NOT_FOUND", "Thumbnail not found");
+    // Only a genuinely missing object is a 404. Any other storage failure is an
+    // outage and must surface as 503 so clients and monitoring can tell the
+    // difference (#91).
+    if (err instanceof StorageObjectNotFoundError) {
+      throw new AppError("NOT_FOUND", "Thumbnail not found");
+    }
+    getLogger().error(
+      { err, event: "thumbnail_storage_error", resourceId: resource.id },
+      "thumbnail storage download failed",
+    );
+    throw new AppError("STORAGE_UNAVAILABLE", "Thumbnail storage is temporarily unavailable", undefined, {
+      cause: err,
+    });
   }
 });
 
