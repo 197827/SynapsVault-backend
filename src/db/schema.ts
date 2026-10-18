@@ -92,24 +92,31 @@ export const resources = pgTable(
 );
 
 // Verifications — AI originality check results
-export const verifications = pgTable("verifications", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => createId()),
-  resourceId: text("resource_id")
-    .notNull()
-    .references(() => resources.id),
-  isOriginal: boolean("is_original").notNull(),
-  confidence: real("confidence").notNull(), // 0.0 - 1.0
-  flags: text("flags"), // JSON stringified array of issues
-  // Token usage + estimated spend for the verification model call (#283).
-  // Nullable so historical rows predating usage tracking remain valid.
-  promptTokens: integer("prompt_tokens"),
-  completionTokens: integer("completion_tokens"),
-  totalTokens: integer("total_tokens"),
-  estimatedCost: text("estimated_cost"), // USD, stringified for precision
-  checkedAt: timestamp("checked_at").defaultNow().notNull(),
-});
+export const verifications = pgTable(
+  "verifications",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    resourceId: text("resource_id")
+      .notNull()
+      .references(() => resources.id),
+    isOriginal: boolean("is_original").notNull(),
+    confidence: real("confidence").notNull(), // 0.0 - 1.0
+    flags: text("flags"), // JSON stringified array of issues
+    // Token usage + estimated spend for the verification model call (#283).
+    // Nullable so historical rows predating usage tracking remain valid.
+    promptTokens: integer("prompt_tokens"),
+    completionTokens: integer("completion_tokens"),
+    totalTokens: integer("total_tokens"),
+    estimatedCost: text("estimated_cost"), // USD, stringified for precision
+    checkedAt: timestamp("checked_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    // Verification lookups by resource (#107).
+    resourceIdIdx: index("idx_verifications_resource_id").on(table.resourceId),
+  }),
+);
 
 // Payments — tracks x402 payments for resources
 export const payments = pgTable(
@@ -129,5 +136,7 @@ export const payments = pgTable(
   (table) => ({
     // Payment history is queried per payer wallet (#285).
     payerAddressIdx: index("idx_payments_payer_address").on(table.payerAddress),
+    // Analytics and delist lookups filter payments by resource (#107).
+    resourceIdIdx: index("idx_payments_resource_id").on(table.resourceId),
   }),
 );
