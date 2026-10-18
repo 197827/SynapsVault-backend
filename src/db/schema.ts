@@ -75,6 +75,8 @@ export const resources = pgTable(
     adminDelistedAt: timestamp("admin_delisted_at"),
     onchainStatus: onchainStatusEnum("onchain_status").notNull().default("none"),
     onchainTxHash: text("onchain_tx_hash"),
+    // Tags set on-chain via SET_TAGS events (#103). Null means never synced.
+    tags: text("tags").array(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => ({
@@ -140,3 +142,14 @@ export const payments = pgTable(
     resourceIdIdx: index("idx_payments_resource_id").on(table.resourceId),
   }),
 );
+
+// Ledger checkpoints — durable event-listener progress (#105).
+// Stored in Postgres so the listener resumes from the last processed ledger
+// even when the container is recreated without a persistent volume. The
+// on-disk file remains only as a fallback.
+export const ledgerCheckpoints = pgTable("ledger_checkpoints", {
+  // Logical name of the checkpoint (e.g. "event_listener").
+  id: text("id").primaryKey(),
+  lastLedger: integer("last_ledger").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
