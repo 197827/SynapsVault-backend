@@ -26,6 +26,13 @@ export const onchainStatusEnum = pgEnum("onchain_status_enum", [
   "failed",
 ]);
 
+export const thumbnailStatusEnum = pgEnum("thumbnail_status_enum", [
+  "none",
+  "pending",
+  "ready",
+  "failed",
+]);
+
 // Publishers — humans or AI agents that publish resources
 export const publishers = pgTable("publishers", {
   id: text("id")
@@ -64,6 +71,9 @@ export const resources = pgTable(
     resourceType: resourceTypeEnum("resource_type").notNull(),
     storagePath: text("storage_path"),
     thumbnailPath: text("thumbnail_path"),
+    // Thumbnail generation state so the background worker can pick up
+    // resources that still need a thumbnail (#89).
+    thumbnailStatus: thumbnailStatusEnum("thumbnail_status").notNull().default("none"),
     contentHash: text("content_hash"),
     externalUrl: text("external_url"),
     mimeType: text("mime_type"),
@@ -88,6 +98,28 @@ export const resources = pgTable(
     // Verification-status filters that aren't anchored to `listed` can't use the
     // composite catalog index, so they get their own (#285).
     verificationStatusIdx: index("idx_resources_verification_status").on(table.verificationStatus),
+    // The thumbnail worker polls for resources awaiting generation (#89).
+    thumbnailStatusIdx: index("idx_resources_thumbnail_status").on(table.thumbnailStatus),
+  }),
+);
+
+// Pending cleanups — storage deletes that failed and must be retried later.
+// Populated by `delistResource` when the DB update succeeds but the storage
+// delete fails (#87).
+export const pendingCleanup = pgTable(
+  "pending_cleanup",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    storagePath: text("storage_path").notNull(),
+    resourceId: text("resource_id").references(() => resources.id),
+    attempts: integer("attempts").notNull().default(0),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    // The cleanup worker drains the queue oldest-first.
+    createdAtIdx: index("idx_pending_cleanup_created_at").on(table.createdAt),
   }),
 );
 

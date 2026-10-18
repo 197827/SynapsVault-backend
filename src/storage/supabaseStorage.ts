@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { Readable } from "node:stream";
 import { config } from "../config.js";
 
 // Create client with realtime disabled — avoids WebSocket requirement on Node 20
@@ -23,6 +24,27 @@ export async function uploadFile(
     contentType: mimeType,
     upsert: false,
   });
+  if (error) throw new Error(`Upload failed: ${error.message}`);
+  return storagePath;
+}
+
+/**
+ * Stream a file to Supabase storage without buffering it fully in memory.
+ * Accepts any Node readable stream (e.g. a disk read stream from multer's
+ * diskStorage) and pipes it directly into the storage upload.
+ */
+export async function uploadFileStream(
+  resourceId: string,
+  stream: Readable,
+  filename: string,
+  mimeType: string,
+): Promise<string> {
+  const storagePath = `${resourceId}/${filename}`;
+  const { error } = await supabase.storage.from(bucket).upload(storagePath, stream, {
+    contentType: mimeType,
+    upsert: false,
+    duplex: "half",
+  } as Parameters<ReturnType<typeof supabase.storage.from>["upload"]>[2]);
   if (error) throw new Error(`Upload failed: ${error.message}`);
   return storagePath;
 }

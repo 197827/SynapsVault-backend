@@ -1,18 +1,37 @@
 import { and, eq, lt, sql } from "drizzle-orm";
+import sharp from "sharp";
 import { db } from "../db/client.js";
-import { resources } from "../db/schema.js";
+import { resources, pendingCleanup } from "../db/schema.js";
 import {
   NETWORK_PASSPHRASE,
   registryClient,
   registryKeypair,
   resourceExists,
 } from "../services/registryClient.js";
+import { deleteFile, downloadFile, uploadFile } from "../services/storageService.js";
+import { config } from "../config.js";
 import { getLogger } from "../lib/logger.js";
 
 const WORKER_INTERVAL_MS = 60_000;
 const MAX_RETRY_ATTEMPTS = 3;
+const MAX_CLEANUP_ATTEMPTS = 5;
+const THUMBNAIL_WIDTH = 320;
 
 const retryCounts = new Map<string, number>();
+
+export async function enqueueCleanup(storagePath: string, reason?: string): Promise<void> {
+  await db.insert(pendingCleanup).values({
+    storagePath,
+    reason: reason ?? null,
+  });
+}
+
+export async function enqueueThumbnail(resourceId: string): Promise<void> {
+  await db
+    .update(resources)
+    .set({ thumbnailPending: true })
+    .where(eq(resources.id, resourceId));
+}
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -55,6 +74,105 @@ async function tick(): Promise<void> {
     }
   } catch (err) {
     getLogger().error({ event: "retry_worker_tick_error", err }, "retry worker tick failed");
+  }
+
+  await processCleanupJobs();
+  await processThumbnailJobs();
+}
+
+async function processCleanupJobs(): Promise<void> {
+  const log = getLogger();
+  try {
+    const jobs = await db.select().from(pendingCleanup);
+
+    for (const job of jobs) {
+      try {
+        await deleteFile(job.storagePath);
+        await db.delete(pendingCleanup).where(eq(pendingCleanup.id, job.id));
+        log.info(
+          { event: "cleanup_job_done", jobId: job.id, storagePath: job.storagePath },
+          "pending cleanup job completed",
+        );
+      } catch (err: any) {
+        const attempts = job.attempts + 1;
+        if (attempts >= MAX_CLEANUP_ATTEMPTS) {
+          await db.delete(pendingCleanup).where(eq(pendingCleanup.id, job.id));
+          log.error(
+            {
+              event: "cleanup_job_dropped",
+              jobId: job.id,
+              storagePath: job.storagePath,
+              attempts,
+              err: err?.message ?? String(err),
+            },
+            "pending cleanup job dropped after max attempts",
+          );
+        } else {
+          await db
+            .update(pendingCleanup)
+            .set({ attempts })
+            .where(eq(pendingCleanup.id, job.id));
+          log.warn(
+            {
+              event: "cleanup_job_failed",
+              jobId: job.id,
+              storagePath: job.storagePath,
+              attempts,
+              err: err?.message ?? String(err),
+            },
+            "pending cleanup job failed; will retry",
+          );
+        }
+      }
+    }
+  } catch (err) {
+    log.error({ event: "cleanup_pass_error", err }, "cleanup processing pass failed");
+  }
+}
+
+async function processThumbnailJobs(): Promise<void> {
+  const log = getLogger();
+  try {
+    const pending = await db
+      .select()
+      .from(resources)
+      .where(and(eq(resources.thumbnailPending, true), sql`${resources.mimeType} LIKE 'image/%'`));
+
+    for (const resource of pending) {
+      const rlog = log.child({ resourceId: resource.id });
+      try {
+        const original = await downloadFile(resource.storagePath);
+        const thumbnail = await sharp(original, {
+          limitInputPixels: config.MAX_THUMBNAIL_PIXELS,
+        })
+          .resize({ width: THUMBNAIL_WIDTH, withoutEnlargement: true })
+          .toBuffer();
+
+        const thumbnailPath = `${resource.storagePath}.thumb.jpg`;
+        await uploadFile(thumbnailPath, thumbnail, "image/jpeg");
+
+        await db
+          .update(resources)
+          .set({ thumbnailPath, thumbnailPending: false })
+          .where(eq(resources.id, resource.id));
+
+        rlog.info(
+          { event: "thumbnail_generated", thumbnailPath },
+          "thumbnail generated",
+        );
+      } catch (err: any) {
+        await db
+          .update(resources)
+          .set({ thumbnailPending: false })
+          .where(eq(resources.id, resource.id));
+        rlog.error(
+          { event: "thumbnail_failed", err: err?.message ?? String(err) },
+          "thumbnail generation failed",
+        );
+      }
+    }
+  } catch (err) {
+    log.error({ event: "thumbnail_pass_error", err }, "thumbnail processing pass failed");
   }
 }
 
