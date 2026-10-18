@@ -27,6 +27,7 @@ const EVENT_TRANSFER = "transfer";
 const EVENT_SET_LISTED = "setlisted";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
+let pollInFlight = false;
 
 function loadLastLedger(): number {
   try {
@@ -42,6 +43,10 @@ function loadLastLedger(): number {
 
 function saveLastLedger(ledger: number): void {
   try {
+    // Monotonic: never move the checkpoint backwards.
+    const current = loadLastLedger();
+    if (ledger <= current) return;
+
     const dir = dirname(LEDGER_TRACKER_PATH);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     writeFileSync(LEDGER_TRACKER_PATH, JSON.stringify({ lastLedger: ledger }));
@@ -152,6 +157,20 @@ async function handleSetListedEvent(event: SorobanEvent): Promise<void> {
 }
 
 async function pollEvents(): Promise<void> {
+  if (pollInFlight) {
+    getLogger().debug({ event: "event_listener_poll_skipped" }, "poll already in flight");
+    return;
+  }
+  pollInFlight = true;
+
+  try {
+    await pollEventsInner();
+  } finally {
+    pollInFlight = false;
+  }
+}
+
+async function pollEventsInner(): Promise<void> {
   const lastLedger = loadLastLedger();
   if (lastLedger === 0) {
     saveLastLedger(1);
@@ -177,11 +196,10 @@ async function pollEvents(): Promise<void> {
 
     if (events.length === 0) return;
 
-    let maxLedger = lastLedger;
+    // Only advance the checkpoint past events whose handlers completed.
+    let lastSuccessfulLedger = lastLedger;
 
     for (const event of events) {
-      if (event.ledger > maxLedger) maxLedger = event.ledger;
-
       const topicSymbols = event.topic.map((t: string) => {
         try {
           const parsed = JSON.parse(t);
@@ -219,12 +237,16 @@ async function pollEvents(): Promise<void> {
       } catch (err) {
         getLogger().warn(
           { event: "event_handler_error", eventType, eventId: event.id, err },
-          "failed to process event",
+          "failed to process event; stopping checkpoint before this event",
         );
+        // Stop before the failed event so it is retried on the next poll.
+        break;
       }
+
+      if (event.ledger > lastSuccessfulLedger) lastSuccessfulLedger = event.ledger;
     }
 
-    saveLastLedger(maxLedger + 1);
+    saveLastLedger(lastSuccessfulLedger + 1);
   } catch (err) {
     getLogger().error({ event: "event_listener_poll_error", err }, "event polling failed");
   }
