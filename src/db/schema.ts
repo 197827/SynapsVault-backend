@@ -75,6 +75,10 @@ export const resources = pgTable(
     adminDelistedAt: timestamp("admin_delisted_at"),
     onchainStatus: onchainStatusEnum("onchain_status").notNull().default("none"),
     onchainTxHash: text("onchain_tx_hash"),
+    // Set when onchainStatus transitions to "pending". The retry worker uses
+    // this (not createdAt) for its cutoff so a freshly pending old resource
+    // isn't retried before a live registration can finish (#82).
+    onchainPendingSince: timestamp("onchain_pending_since"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => ({

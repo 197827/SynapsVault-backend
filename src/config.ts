@@ -249,6 +249,9 @@ const envSchema = z.object({
 
   // Optional HMAC-SHA256 request signatures for publisher mutations (off by default).
   REQUIRE_REQUEST_SIGNATURE: envFlag(false),
+  // Legacy register flow where the server signs with the platform registry key
+  // on the creator's behalf (#80). Off by default; clients must send signedXdr.
+  ALLOW_LEGACY_REGISTER: envFlag(false),
   // Max clock skew for X-Timestamp when signatures are required (default 5 minutes).
   SIGNATURE_MAX_SKEW_MS: z.coerce.number().default(300_000),
 

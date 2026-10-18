@@ -44,7 +44,7 @@ import {
   submitSignedTx,
 } from "../services/registryClient.js";
 import { parsePayerFromXPayment } from "../lib/parseXPayment.js";
-import { AppError } from "../lib/errors.js";
+import { AppError, isAppError } from "../lib/errors.js";
 import { emitToPublisher } from "../services/webhookService.js";
 
 const router: RouterType = Router();
@@ -432,9 +432,25 @@ router.post(
 
     const { signedXdr } = req.body;
 
+    if (!signedXdr && !config.ALLOW_LEGACY_REGISTER) {
+      throw new AppError(
+        "GONE",
+        "Server-signed registration is no longer supported",
+        {
+          message:
+            "Registrations must be signed by the resource owner. Use GET /resources/:id/register/prepare to obtain an unsigned transaction, sign it client-side, then submit the signed XDR via POST /resources/:id/register.",
+          nextSteps: [
+            `Call GET /resources/${resourceId}/register/prepare to get the unsignedXdr.`,
+            "Sign the transaction with the creator's wallet.",
+            `Submit the signed XDR as { "signedXdr": "..." } to POST /resources/${resourceId}/register.`,
+          ],
+        },
+      );
+    }
+
     await db
       .update(resources)
-      .set({ onchainStatus: "pending" })
+      .set({ onchainStatus: "pending", onchainPendingSince: new Date() })
       .where(eq(resources.id, resourceId));
 
     try {
@@ -543,15 +559,23 @@ router.post(
         });
       }
     } catch (err: any) {
-      getLogger().error(
-        { event: "onchain_register", resourceId, success: false, err },
-        "on-chain resource registration failed",
-      );
       // Mark failed but do NOT touch `listed` — resource stays available for purchase
       await db
         .update(resources)
         .set({ onchainStatus: "failed" })
         .where(eq(resources.id, resourceId));
+
+      // AppErrors raised inside the flow (e.g. the signed-flow failure) already
+      // carry tx hash, explorer link and guidance, and were logged there — pass
+      // them through unchanged so that context isn't lost or logged twice.
+      if (isAppError(err)) {
+        throw err;
+      }
+
+      getLogger().error(
+        { event: "onchain_register", resourceId, success: false, err },
+        "on-chain resource registration failed",
+      );
       const guidance = buildRegistrationFailureGuidance({
         resourceId,
         detail: err?.message,

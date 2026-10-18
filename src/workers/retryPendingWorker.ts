@@ -41,7 +41,9 @@ async function tick(): Promise<void> {
     const stuck = await db
       .select()
       .from(resources)
-      .where(and(eq(resources.onchainStatus, "pending"), lt(resources.createdAt, cutoff)));
+      .where(
+        and(eq(resources.onchainStatus, "pending"), lt(resources.onchainPendingSince, cutoff)),
+      );
 
     if (stuck.length === 0) return;
 
@@ -92,6 +94,21 @@ async function retryResource(resource: typeof resources.$inferSelect): Promise<v
       return;
     }
 
+    // Never register under a creator other than the resource's wallet address.
+    // If the creator must sign, we cannot do it server-side; flag it for the client.
+    if (!resource.walletAddress) {
+      log.warn(
+        { event: "retry_missing_wallet_address" },
+        "resource has no walletAddress; cannot register on-chain",
+      );
+      await db
+        .update(resources)
+        .set({ onchainStatus: "needs_client_signature" })
+        .where(eq(resources.id, resource.id));
+      retryCounts.delete(resource.id);
+      return;
+    }
+
     log.info(
       { event: "retry_attempt", attempt: attempts, maxAttempts: MAX_RETRY_ATTEMPTS },
       "re-attempting on-chain registration",
@@ -104,8 +121,22 @@ async function retryResource(resource: typeof resources.$inferSelect): Promise<v
       contentHash: resource.contentHash,
     });
 
+    const creator = resource.walletAddress;
+    if (creator !== resource.walletAddress) {
+      log.warn(
+        { event: "retry_creator_mismatch" },
+        "creator differs from walletAddress; marking as needing client signature",
+      );
+      await db
+        .update(resources)
+        .set({ onchainStatus: "needs_client_signature" })
+        .where(eq(resources.id, resource.id));
+      retryCounts.delete(resource.id);
+      return;
+    }
+
     const tx = await registryClient.register({
-      creator: registryKeypair.publicKey(),
+      creator,
       id: resource.id,
       price: BigInt(priceStroops),
       metadata,
