@@ -1250,15 +1250,17 @@ export const openApiSpec = {
         security: [{ ApiKeyAuth: [], RequestSignature: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: {
+          required: true,
           content: {
             "application/json": {
               schema: {
                 type: "object",
+                required: ["signedXdr"],
                 properties: {
                   signedXdr: {
                     type: "string",
                     description:
-                      "Signed Stellar transaction XDR (omit to use legacy server-signed flow)",
+                      "Signed Stellar transaction XDR produced by the resource owner. The server never signs registrations on the creator's behalf.",
                   },
                 },
               },
@@ -1282,7 +1284,13 @@ export const openApiSpec = {
             },
           },
           "400": {
-            description: "Not verified",
+            description:
+              "Missing `signedXdr` or resource not verified. The legacy server-signed registration flow is no longer supported; clients must submit a signed transaction.",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "410": {
+            description:
+              "The legacy server-signed registration flow has been removed. Submit `signedXdr` from the resource owner's wallet.",
             content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
           },
           "401": {
