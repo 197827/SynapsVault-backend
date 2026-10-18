@@ -1,4 +1,5 @@
 import { Router, type Router as RouterType } from "express";
+import { promises as fs } from "node:fs";
 import { apiKeyAuth } from "../middleware/apiKeyAuth.js";
 import { requestSignatureAuth } from "../middleware/requestSignatureAuth.js";
 import { singleFileUpload, validateUploadContentType } from "../middleware/uploadGuards.js";
@@ -50,6 +51,21 @@ import { AppError } from "../lib/errors.js";
 import { emitToPublisher } from "../services/webhookService.js";
 
 const router: RouterType = Router();
+
+// Best-effort removal of a multer disk-stored temp file. Never throws.
+async function cleanupTempFile(path: string | undefined): Promise<void> {
+  if (!path) return;
+  try {
+    await fs.unlink(path);
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      getLogger().warn(
+        { event: "upload_temp_cleanup_error", path, err },
+        "failed to remove upload temp file",
+      );
+    }
+  }
+}
 
 // POST /resources — publish a resource (authenticated)
 router.post(
@@ -104,13 +120,18 @@ router.post(
 
         const { title, description, price, walletAddress } = parsed.data;
 
+        // Uploads are streamed to disk by multer (#90); read the temp file
+        // back into a buffer for storage. Thumbnail generation now happens
+        // asynchronously in a worker (#89), so the response does not wait on it.
+        const fileBuffer = await fs.readFile(req.file.path);
+
         const resource = await createFileResource({
           publisherId: publisher.id,
           title,
           description,
           price,
           walletAddress: walletAddress || publisher.walletAddress,
-          fileBuffer: req.file.buffer,
+          fileBuffer,
           filename: req.file.originalname,
           mimeType: req.file.mimetype,
         });
@@ -149,6 +170,10 @@ router.post(
       // being stuck behind a stale in-progress marker.
       if (scopedKey) store.delete(scopedKey);
       throw err;
+    } finally {
+      // Always remove the disk-stored temp file, whether the request succeeded
+      // or failed.
+      await cleanupTempFile(req.file?.path);
     }
   },
 );
