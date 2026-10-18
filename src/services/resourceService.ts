@@ -168,26 +168,48 @@ export type CatalogPage<T> = {
 
 const CATALOG_DEFAULT_LIMIT = 20;
 
-function sortRows<T extends { price: string; title: string; createdAt: Date | string }>(
-  rows: T[],
-  sort: CatalogSort,
-): T[] {
-  // "newest" is the default — handled by ORDER BY created_at DESC in queryCatalog (#287).
+// Locale-independent title comparison (#108). `localeCompare` without an
+// explicit locale depends on the host's ICU/locale, so the same catalog could
+// order differently across machines. Comparing lowercased strings with
+// `<`/`>` uses code-unit order, which is stable everywhere.
+function compareTitles(a: string, b: string): number {
+  const la = a.toLowerCase();
+  const lb = b.toLowerCase();
+  if (la < lb) return -1;
+  if (la > lb) return 1;
+  return 0;
+}
+
+function sortRows<
+  T extends { id: string; price: string; title: string; createdAt: Date | string },
+>(rows: T[], sort: CatalogSort): T[] {
+  // "newest" is the default — handled by ORDER BY created_at DESC, id DESC in
+  // queryCatalog (#287, #108).
   if (sort === "newest" || !sort) return rows;
 
   const sorted = [...rows];
   switch (sort) {
     case "price_asc":
-      sorted.sort((a, b) => parseFloat(a.price) - parseFloat(b.price));
+      sorted.sort((a, b) => parseFloat(a.price) - parseFloat(b.price) || compareIds(a.id, b.id));
       break;
     case "price_desc":
-      sorted.sort((a, b) => parseFloat(b.price) - parseFloat(a.price));
+      sorted.sort((a, b) => parseFloat(b.price) - parseFloat(a.price) || compareIds(a.id, b.id));
       break;
     case "title":
-      sorted.sort((a, b) => a.title.localeCompare(b.title));
+      // Deterministic title order with an id tiebreaker so equal titles never
+      // straddle page boundaries (#108).
+      sorted.sort((a, b) => compareTitles(a.title, b.title) || compareIds(a.id, b.id));
       break;
   }
   return sorted;
+}
+
+// Stable id tiebreaker: descending id order, matching the catalog's
+// `created_at DESC, id DESC` ordering.
+function compareIds(a: string, b: string): number {
+  if (a < b) return 1;
+  if (a > b) return -1;
+  return 0;
 }
 
 async function queryCatalog() {
@@ -208,7 +230,9 @@ async function queryCatalog() {
     .from(resources)
     .innerJoin(publishers, eq(resources.publisherId, publishers.id))
     .where(eq(resources.listed, true))
-    .orderBy(desc(resources.createdAt));
+    // `id DESC` is a stable tiebreaker so rows sharing a `created_at` have a
+    // total order and pagination never duplicates or skips them (#108).
+    .orderBy(desc(resources.createdAt), desc(resources.id));
 }
 
 async function getCachedCatalogRows(): Promise<Awaited<ReturnType<typeof queryCatalog>>> {
